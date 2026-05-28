@@ -1,9 +1,9 @@
 // ============================================================
 // QualityService.gs — Aggregations and logic for Quality Audits
-// Source: 'QualityAudits' tab in the same spreadsheet
+// Source: 'PLX Raw data' tab
 // ============================================================
 
-var QUALITY_SHEET_NAME = 'QualityAudits';
+var QUALITY_SHEET_NAME = 'PLX Raw data';
 
 // ── SCHEMA MAPPING ────────────────────────────────────────────────────────
 
@@ -49,8 +49,11 @@ var Q_COLS = {
   PROFESSIONAL_CONDUCT: 32,
   PAYMENT_COMPLAINTS: 33,
 
-  TEAM: 36,              // AK (index 36)
-  AGENT_WORKFLOW: 37     // AL (index 37)
+  TEAM: 36,              // AK
+  AGENT_WORKFLOW: 37,    // AL
+
+  SUPERVISOR: 66,        // BO
+  MANAGER: 67            // BP
 };
 
 var Q_TARGETS = {
@@ -59,54 +62,35 @@ var Q_TARGETS = {
   COMPLIANCE: 99.50
 };
 
+var Q_PARAM_GROUPS = {
+  customer: ['LISTENING', 'PROBING', 'COMPLETE_RESOLUTION', 'TROUBLESHOOTING', 'USER_EXPECTATIONS', 'EMPATHY', 'OWNERSHIP', 'REFUNDS', 'RESPONSIVENESS'],
+  business: ['CONSULTS_ESCALATIONS', 'CASE_DETAILS', 'CATEGORIZATION', 'CSAT_REMINDER', 'CASE_STATE', 'OPENING_CLOSING', 'LANGUAGE_PROFICIENCY'],
+  compliance: ['AUTHENTICATION', 'GOOGLE_ONLY_INFO', 'PROFESSIONAL_CONDUCT', 'PAYMENT_COMPLAINTS']
+};
+
+var Q_PARAM_COLS = [].concat(Q_PARAM_GROUPS.customer, Q_PARAM_GROUPS.business, Q_PARAM_GROUPS.compliance);
+
+// ── APPS SCRIPT WEB APP ───────────────────────────────────────────────────
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('QualityView')
+    .evaluate()
+    .setTitle('Quality Dashboard')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
 // ── DATA LOADING ──────────────────────────────────────────────────────────
 
 function getRawQualityData() {
-  var cacheKey = 'quality_raw_v1';
-  var cache = CacheService.getScriptCache();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(QUALITY_SHEET_NAME);
+  if (!sheet) return [];
 
-  try {
-    var chunkCount = cache.get(cacheKey + '_chunks');
-    if (chunkCount) {
-      var assembled = '';
-      for (var c = 0; c < parseInt(chunkCount); c++) {
-        var chunk = cache.get(cacheKey + '_chunk_' + c);
-        if (!chunk) { assembled = null; break; }
-        assembled += chunk;
-      }
-      if (assembled) return JSON.parse(assembled);
-    }
-  } catch(e) {
-    Logger.log('[Quality] Cache read error: ' + e.message);
-  }
-
-  var sheet = getSheet(QUALITY_SHEET_NAME);
   var raw = sheet.getDataRange().getValues();
   if (raw.length < 2) return [];
 
-  var data = raw.slice(1);
-
-  // Cache result (chunked if needed)
-  try {
-    var serialized = JSON.stringify(data);
-    if (serialized.length < 100000) {
-      cache.put(cacheKey, serialized, 1800); // 30 min
-    } else {
-      var chunkSize = 90000;
-      var chunks = [];
-      for (var ci = 0; ci < serialized.length; ci += chunkSize) {
-        chunks.push(serialized.slice(ci, ci + chunkSize));
-      }
-      chunks.forEach(function(chunk, idx) {
-        cache.put(cacheKey + '_chunk_' + idx, chunk, 1800);
-      });
-      cache.put(cacheKey + '_chunks', String(chunks.length), 1800);
-    }
-  } catch(e) {
-    Logger.log('[Quality] Cache write error: ' + e.message);
-  }
-
-  return data;
+  return raw.slice(1);
 }
 
 function getAvailableQualityMonths() {
@@ -137,48 +121,48 @@ function normalizeLdap(val) {
   return String(val).trim().toLowerCase().split('@')[0];
 }
 
+function formatDate(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  return String(val);
+}
+
 // ── AGGREGATION ───────────────────────────────────────────────────────────
 
 function aggregateQualityRows(rows) {
   if (rows.length === 0) return null;
 
   var customerSum = 0, businessSum = 0, complianceSum = 0;
-
   var params = {};
-  var paramGroups = {
-    customer: ['LISTENING', 'PROBING', 'COMPLETE_RESOLUTION', 'TROUBLESHOOTING', 'USER_EXPECTATIONS', 'EMPATHY', 'OWNERSHIP', 'REFUNDS', 'RESPONSIVENESS'],
-    business: ['CONSULTS_ESCALATIONS', 'CASE_DETAILS', 'CATEGORIZATION', 'CSAT_REMINDER', 'CASE_STATE', 'OPENING_CLOSING', 'LANGUAGE_PROFICIENCY'],
-    compliance: ['AUTHENTICATION', 'GOOGLE_ONLY_INFO', 'PROFESSIONAL_CONDUCT', 'PAYMENT_COMPLAINTS']
-  };
 
-  var paramCols = [].concat(paramGroups.customer, paramGroups.business, paramGroups.compliance);
-  paramCols.forEach(function(p) { params[p] = { yes: 0, total: 0 }; });
+  Q_PARAM_COLS.forEach(function(p) { params[p] = { yes: 0, total: 0 }; });
 
   rows.forEach(function(r) {
     customerSum += (parseFloat(r[Q_COLS.CUSTOMER_CRITICAL]) || 0);
     businessSum += (parseFloat(r[Q_COLS.BUSINESS_CRITICAL]) || 0);
     complianceSum += (parseFloat(r[Q_COLS.COMPLIANCE_CRITICAL]) || 0);
 
-    paramCols.forEach(function(p) {
+    Q_PARAM_COLS.forEach(function(p) {
       var val = String(r[Q_COLS[p]]).trim().toLowerCase();
-      if (val === 'yes' || val === 'no') {
+      if (val === 'yes' || val === 'no' || val === '1' || val === '0') {
         params[p].total++;
-        if (val === 'yes') params[p].yes++;
+        if (val === 'yes' || val === '1') params[p].yes++;
       }
     });
   });
 
   var count = rows.length;
   var paramScores = {};
-  paramCols.forEach(function(p) {
+  Q_PARAM_COLS.forEach(function(p) {
     paramScores[p] = params[p].total > 0 ? (params[p].yes / params[p].total) * 100 : null;
   });
 
-  // Grouped params
   var groupedParams = {
-    customer: paramGroups.customer.map(p => ({ name: p, score: paramScores[p] })),
-    business: paramGroups.business.map(p => ({ name: p, score: paramScores[p] })),
-    compliance: paramGroups.compliance.map(p => ({ name: p, score: paramScores[p] }))
+    customer: Q_PARAM_GROUPS.customer.map(p => ({ name: p, score: paramScores[p] })),
+    business: Q_PARAM_GROUPS.business.map(p => ({ name: p, score: paramScores[p] })),
+    compliance: Q_PARAM_GROUPS.compliance.map(p => ({ name: p, score: paramScores[p] }))
   };
 
   return {
@@ -198,7 +182,7 @@ function aggregateTrends(rows) {
 
   rows.forEach(function(r) {
     var dateRaw = r[Q_COLS.REVIEW_DATE];
-    var date = (dateRaw instanceof Date) ? Utilities.formatDate(dateRaw, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(dateRaw);
+    var date = formatDate(dateRaw);
     var week = r[Q_COLS.REVIEW_WEEK];
 
     [ {obj: daily, key: date}, {obj: weekly, key: week} ].forEach(function(t) {
@@ -227,12 +211,14 @@ function aggregateTrends(rows) {
   return { daily: formatTrend(daily), weekly: formatTrend(weekly) };
 }
 
-// ── VIEW DATA FETCHERS ────────────────────────────────────────────────────
+// ── CLIENT WRAPPERS ───────────────────────────────────────────────────────
 
-function getMyQualityData(ldap, month) {
-  var cacheKey = 'quality_agent_' + normalizeLdap(ldap) + '_' + month;
-  var cached = getCached(cacheKey);
-  if (cached) return cached;
+function clientGetAvailableQualityMonths() {
+  return getAvailableQualityMonths();
+}
+
+function clientGetMyQuality(ldap, month) {
+  if (!ldap) ldap = Session.getActiveUser().getEmail().split('@')[0];
 
   var allRows = getRawQualityData();
   var filtered = allRows.filter(function(r) {
@@ -282,7 +268,7 @@ function getMyQualityData(ldap, month) {
     };
   });
 
-  var result = {
+  return {
     ldap: ldap,
     month: month,
     stats: stats,
@@ -290,31 +276,21 @@ function getMyQualityData(ldap, month) {
     caseLog: caseLog,
     hasData: filtered.length > 0
   };
-
-  setCached(cacheKey, result, 600); // 10 min
-  return result;
 }
 
-function getTeamQualityData(managerLdap, month) {
-  var cacheKey = 'quality_team_' + normalizeLdap(managerLdap) + '_' + month;
-  var cached = getCached(cacheKey);
-  if (cached) return cached;
-
-  var managedLdaps = getManagedLdaps(managerLdap);
+function clientGetTeamQuality(supervisor, month) {
   var allRows = getRawQualityData();
-
-  var teamRows = allRows.filter(function(r) {
-    var agentLdap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
-    return (managedLdaps === null || managedLdaps.indexOf(agentLdap) !== -1) &&
+  var filtered = allRows.filter(function(r) {
+    return String(r[Q_COLS.SUPERVISOR]).trim() === String(supervisor).trim() &&
            normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
   });
 
-  var teamStats = aggregateQualityRows(teamRows);
-  var trends = aggregateTrends(teamRows);
+  var stats = aggregateQualityRows(filtered);
+  var trends = aggregateTrends(filtered);
 
   var agentStats = {};
   var uniqueLdaps = [];
-  teamRows.forEach(function(r) {
+  filtered.forEach(function(r) {
     var ldap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
     if (!agentStats[ldap]) {
       agentStats[ldap] = [];
@@ -324,76 +300,96 @@ function getTeamQualityData(managerLdap, month) {
   });
 
   var agents = uniqueLdaps.map(function(ldap) {
-    var stats = aggregateQualityRows(agentStats[ldap]);
     return {
       ldap: ldap,
-      displayName: formatDisplayName(ldap),
-      stats: stats
+      stats: aggregateQualityRows(agentStats[ldap])
     };
-  }).sort(function(a, b) {
-    // Sort by compliance then customer then business? Or just average.
-    var avgA = (a.stats.customer + a.stats.business + a.stats.compliance) / 3;
-    var avgB = (b.stats.customer + b.stats.business + b.stats.compliance) / 3;
-    return avgB - avgA;
-  });
+  }).sort((a,b) => (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance));
 
-  var result = {
-    managerLdap: managerLdap,
+  return {
+    supervisor: supervisor,
     month: month,
-    stats: teamStats,
+    stats: stats,
     trends: trends,
     agents: agents,
-    hasData: teamRows.length > 0
+    hasData: filtered.length > 0
   };
-
-  setCached(cacheKey, result, 600); // 10 min
-  return result;
 }
 
-function getAllTeamsQualityData(month) {
-  var cacheKey = 'quality_allteams_' + month;
-  var cached = getCached(cacheKey);
-  if (cached) return cached;
-
+function clientGetClusterQuality(manager, month) {
   var allRows = getRawQualityData();
-  var monthRows = allRows.filter(function(r) {
-    return normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
+  var filtered = allRows.filter(function(r) {
+    return String(r[Q_COLS.MANAGER]).trim() === String(manager).trim() &&
+           normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
   });
 
-  var siteStats = aggregateQualityRows(monthRows);
+  var stats = aggregateQualityRows(filtered);
+  var trends = aggregateTrends(filtered);
 
-  // Group by TeamLead (or Team column if reliable)
-  // User said "Use the existing manager/supervisor mapping already established in the Managers and Agents sheets."
-  // So I'll fetch all managers/supervisors and their teams.
+  var supervisorStats = {};
+  var uniqueSupervisors = [];
+  filtered.forEach(function(r) {
+    var sup = String(r[Q_COLS.SUPERVISOR]).trim();
+    if (!supervisorStats[sup]) {
+      supervisorStats[sup] = [];
+      uniqueSupervisors.push(sup);
+    }
+    supervisorStats[sup].push(r);
+  });
 
-  var managers = getSheetData('Managers');
-  var teams = managers.filter(function(m) { return m.Role === 'manager' || m.Role === 'supervisor'; }).map(function(m) {
-    var mLdap = normalizeLdap(m.LDAP);
-    var managed = getManagedLdaps(mLdap);
-    var teamRows = monthRows.filter(function(r) {
-      var agentLdap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
-      return (managed === null || managed.indexOf(agentLdap) !== -1);
-    });
-
+  var supervisors = uniqueSupervisors.map(function(sup) {
     return {
-      managerLdap: mLdap,
-      teamName: m.Team || ('Team ' + formatDisplayName(mLdap)),
-      stats: aggregateQualityRows(teamRows),
-      agentCount: managed ? managed.length : 0
+      name: sup,
+      stats: aggregateQualityRows(supervisorStats[sup])
     };
-  }).filter(function(t) { return t.stats !== null; })
-    .sort(function(a, b) {
-      var avgA = (a.stats.customer + a.stats.business + a.stats.compliance) / 3;
-      var avgB = (b.stats.customer + b.stats.business + b.stats.compliance) / 3;
-      return avgB - avgA;
-    });
+  }).sort((a,b) => (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance));
 
-  var result = {
+  return {
+    manager: manager,
     month: month,
-    siteStats: siteStats,
-    teams: teams
+    stats: stats,
+    trends: trends,
+    supervisors: supervisors,
+    hasData: filtered.length > 0
   };
+}
 
-  setCached(cacheKey, result, 600); // 10 min
-  return result;
+function clientGetAllAgents() {
+  var rows = getRawQualityData();
+  var seen = {};
+  rows.forEach(function(r) {
+    var ldap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
+    if (ldap) seen[ldap] = true;
+  });
+  return Object.keys(seen).sort().map(function(ldap) {
+    return { ldap: ldap };
+  });
+}
+
+function clientGetAllSupervisors() {
+  var rows = getRawQualityData();
+  var seen = {};
+  rows.forEach(function(r) {
+    var sup = String(r[Q_COLS.SUPERVISOR]).trim();
+    if (sup) seen[sup] = true;
+  });
+  return Object.keys(seen).sort();
+}
+
+function clientGetAllManagers() {
+  var rows = getRawQualityData();
+  var seen = {};
+  rows.forEach(function(r) {
+    var mgr = String(r[Q_COLS.MANAGER]).trim();
+    if (mgr) seen[mgr] = true;
+  });
+  return Object.keys(seen).sort();
+}
+
+function clientGetSession() {
+  var email = Session.getActiveUser().getEmail();
+  return {
+    ldap: email.split('@')[0],
+    email: email
+  };
 }
