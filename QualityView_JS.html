@@ -48,30 +48,41 @@ function initApp() {
 
   STATE.session = b.session;
   STATE.agent = b.session.ldap;
-  STATE.month = (b.months && b.months.length > 0) ? b.months[0] : '';
   document.getElementById('agent-ldap-input').value = b.session.ldap;
-
-  // Render Months
-  var picker = document.getElementById('quality-month-picker');
-  if (b.months && b.months.length > 0) {
-    picker.innerHTML = b.months.map((m, i) => `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`).join('');
-  } else {
-    picker.innerHTML = '<option value="">No data available</option>';
-  }
-
-  // Populate Datalists
-  document.getElementById('agent-list').innerHTML = (b.allAgents || []).map(a => `<option value="${a.ldap}">`).join('');
-  document.getElementById('supervisor-list').innerHTML = (b.allSupervisors || []).map(s => `<option value="${s}">`).join('');
-  document.getElementById('manager-list').innerHTML = (b.allManagers || []).map(m => `<option value="${m}">`).join('');
 
   hideLoader();
 
-  // Instant render initial data
-  if (b.initialData) {
-    renderAgentView(b.initialData);
-  } else {
-    refreshView();
-  }
+  // Lazy load supporting data
+  loadMonths();
+  loadSelectors();
+}
+
+function loadMonths() {
+  google.script.run.withSuccessHandler(function(months) {
+    var picker = document.getElementById('quality-month-picker');
+    if (months && months.length > 0) {
+      STATE.month = months[0];
+      picker.innerHTML = months.map((m, i) => `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`).join('');
+      refreshView();
+    } else {
+      picker.innerHTML = '<option value="">No data</option>';
+      document.getElementById('view-content').innerHTML = '<div class="q-card text-center"><h3>No audit data found in the spreadsheet.</h3></div>';
+    }
+  }).clientGetAvailableQualityMonths();
+}
+
+function loadSelectors() {
+  google.script.run.withSuccessHandler(function(agents) {
+    document.getElementById('agent-list').innerHTML = (agents || []).map(a => `<option value="${a.ldap}">`).join('');
+  }).clientGetAllAgents();
+
+  google.script.run.withSuccessHandler(function(sups) {
+    document.getElementById('supervisor-list').innerHTML = (sups || []).map(s => `<option value="${s}">`).join('');
+  }).clientGetAllSupervisors();
+
+  google.script.run.withSuccessHandler(function(mgrs) {
+    document.getElementById('manager-list').innerHTML = (mgrs || []).map(m => `<option value="${m}">`).join('');
+  }).clientGetAllManagers();
 }
 
 function hideLoader() {
