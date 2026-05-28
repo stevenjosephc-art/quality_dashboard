@@ -70,30 +70,19 @@ var Q_PARAM_GROUPS = {
 
 var Q_PARAM_COLS = [].concat(Q_PARAM_GROUPS.customer, Q_PARAM_GROUPS.business, Q_PARAM_GROUPS.compliance);
 
+var _MEMOIZED_RAW_DATA = null;
+
 // ── APPS SCRIPT WEB APP ───────────────────────────────────────────────────
 
 function doGet() {
   var template = HtmlService.createTemplateFromFile('QualityView');
 
   try {
-    // Pre-fetch critical data for instant loading
+    // Only fetch session for instant shell loading
     var session = clientGetSession();
-    var months = clientGetAvailableQualityMonths();
-    var initialMonth = months[0] || '';
-    var initialData = initialMonth ? clientGetMyQuality(session.ldap, initialMonth) : null;
-
-    // All agents for the dropdown
-    var allAgents = clientGetAllAgents();
-    var allSupervisors = clientGetAllSupervisors();
-    var allManagers = clientGetAllManagers();
 
     template.bootstrap = JSON.stringify({
-      session: session,
-      months: months,
-      initialData: initialData,
-      allAgents: allAgents,
-      allSupervisors: allSupervisors,
-      allManagers: allManagers
+      session: session
     });
   } catch(e) {
     Logger.log('doGet Error: ' + e.message);
@@ -109,6 +98,8 @@ function doGet() {
 // ── DATA LOADING ──────────────────────────────────────────────────────────
 
 function getRawQualityData() {
+  if (_MEMOIZED_RAW_DATA) return _MEMOIZED_RAW_DATA;
+
   var cache = CacheService.getScriptCache();
   var cacheKey = 'quality_raw_v1';
 
@@ -121,7 +112,10 @@ function getRawQualityData() {
         if (!chunk) { assembled = null; break; }
         assembled += chunk;
       }
-      if (assembled) return JSON.parse(assembled);
+      if (assembled) {
+        _MEMOIZED_RAW_DATA = JSON.parse(assembled);
+        return _MEMOIZED_RAW_DATA;
+      }
     }
   } catch(e) {
     Logger.log('Cache read error: ' + e.message);
@@ -135,6 +129,7 @@ function getRawQualityData() {
   if (raw.length < 2) return [];
 
   var data = raw.slice(1);
+  _MEMOIZED_RAW_DATA = data;
 
   try {
     var serialized = JSON.stringify(data);
