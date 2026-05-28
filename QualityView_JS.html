@@ -35,11 +35,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function initApp() {
   var b = window.BOOTSTRAP_DATA;
-  if (!b) return;
+  if (!b || b.error) {
+    console.error('Bootstrap Error:', b ? b.error : 'No data');
+    document.getElementById('app-loader').innerHTML =
+      '<div class="text-center">' +
+      '<h2 style="color:var(--error)">Initialization Error</h2>' +
+      '<p>' + (b ? b.error : 'Failed to load dashboard data.') + '</p>' +
+      '<button class="q-pill-select mt-16" onclick="location.reload()">Retry</button>' +
+      '</div>';
+    return;
+  }
 
   STATE.session = b.session;
   STATE.agent = b.session.ldap;
-  STATE.month = b.months[0] || '';
+  STATE.month = (b.months && b.months.length > 0) ? b.months[0] : '';
   document.getElementById('agent-ldap-input').value = b.session.ldap;
 
   // Render Months

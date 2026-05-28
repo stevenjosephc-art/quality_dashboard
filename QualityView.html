@@ -94,7 +94,7 @@
 
   <script>
     // Injected from server
-    window.BOOTSTRAP_DATA = JSON.parse(<?!= bootstrap ?>);
+    window.BOOTSTRAP_DATA = <?!= bootstrap ?>;
   </script>
   <?!= HtmlService.createHtmlOutputFromFile('QualityView_JS').getContent(); ?>
 </body>

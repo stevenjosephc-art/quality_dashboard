@@ -75,25 +75,30 @@ var Q_PARAM_COLS = [].concat(Q_PARAM_GROUPS.customer, Q_PARAM_GROUPS.business, Q
 function doGet() {
   var template = HtmlService.createTemplateFromFile('QualityView');
 
-  // Pre-fetch critical data for instant loading
-  var session = clientGetSession();
-  var months = clientGetAvailableQualityMonths();
-  var initialMonth = months[0] || '';
-  var initialData = clientGetMyQuality(session.ldap, initialMonth);
+  try {
+    // Pre-fetch critical data for instant loading
+    var session = clientGetSession();
+    var months = clientGetAvailableQualityMonths();
+    var initialMonth = months[0] || '';
+    var initialData = initialMonth ? clientGetMyQuality(session.ldap, initialMonth) : null;
 
-  // All agents for the dropdown
-  var allAgents = clientGetAllAgents();
-  var allSupervisors = clientGetAllSupervisors();
-  var allManagers = clientGetAllManagers();
+    // All agents for the dropdown
+    var allAgents = clientGetAllAgents();
+    var allSupervisors = clientGetAllSupervisors();
+    var allManagers = clientGetAllManagers();
 
-  template.bootstrap = JSON.stringify({
-    session: session,
-    months: months,
-    initialData: initialData,
-    allAgents: allAgents,
-    allSupervisors: allSupervisors,
-    allManagers: allManagers
-  });
+    template.bootstrap = JSON.stringify({
+      session: session,
+      months: months,
+      initialData: initialData,
+      allAgents: allAgents,
+      allSupervisors: allSupervisors,
+      allManagers: allManagers
+    });
+  } catch(e) {
+    Logger.log('doGet Error: ' + e.message);
+    template.bootstrap = JSON.stringify({ error: e.message });
+  }
 
   return template.evaluate()
     .setTitle('Quality Dashboard')
@@ -105,15 +110,21 @@ function doGet() {
 
 function getRawQualityData() {
   var cache = CacheService.getScriptCache();
-  var cacheKey = 'quality_raw_data_v1';
-  var cached = cache.get(cacheKey);
+  var cacheKey = 'quality_raw_v1';
 
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch(e) {
-      Logger.log('Cache parse error: ' + e);
+  try {
+    var chunkCount = cache.get(cacheKey + '_chunks');
+    if (chunkCount) {
+      var assembled = '';
+      for (var c = 0; c < parseInt(chunkCount); c++) {
+        var chunk = cache.get(cacheKey + '_chunk_' + c);
+        if (!chunk) { assembled = null; break; }
+        assembled += chunk;
+      }
+      if (assembled) return JSON.parse(assembled);
     }
+  } catch(e) {
+    Logger.log('Cache read error: ' + e.message);
   }
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -127,11 +138,17 @@ function getRawQualityData() {
 
   try {
     var serialized = JSON.stringify(data);
-    if (serialized.length < 100000) { // Cache size limit
-      cache.put(cacheKey, serialized, 600); // 10 min cache
+    var chunkSize = 90000;
+    var chunks = [];
+    for (var ci = 0; ci < serialized.length; ci += chunkSize) {
+      chunks.push(serialized.slice(ci, ci + chunkSize));
     }
+    chunks.forEach(function(chunk, idx) {
+      cache.put(cacheKey + '_chunk_' + idx, chunk, 600);
+    });
+    cache.put(cacheKey + '_chunks', String(chunks.length), 600);
   } catch(e) {
-    Logger.log('Cache write error: ' + e);
+    Logger.log('Cache write error: ' + e.message);
   }
 
   return data;

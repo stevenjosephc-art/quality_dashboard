@@ -458,7 +458,7 @@ body {
     // Injected from server
   </script>
 <script>
-window.BOOTSTRAP_DATA = JSON.parse(JSON.stringify({'session':{'ldap':'test_user'},'months':['2024-05'],'initialData':{'hasData':true,'stats':{'customer':96,'business':92,'compliance':100,'count':10,'groupedParams':{'customer':[{'name':'LISTENING','score':95}],'business':[{'name':'CATEGORIZATION','score':90}],'compliance':[{'name':'AUTHENTICATION',score:100}]}},'trends':{'daily':[{'label':'2024-05-01','customer':95,'business':90,'compliance':100,'avg':95}]},'caseLog':[{'caseId':'123','reviewDate':'2024-05-01','customer':1,'business':1,'compliance':1,'comments':'Good job'}]},'allAgents':[{'ldap':'agent1'}],'allSupervisors':['Sup1'],'allManagers':['Mgr1']}));
+window.BOOTSTRAP_DATA = {'session':{'ldap':'test_user'},'months':['2024-05'],'initialData':{'hasData':true,'stats':{'customer':96,'business':92,'compliance':100,'count':10,'groupedParams':{'customer':[{'name':'LISTENING','score':95}],'business':[{'name':'CATEGORIZATION','score':90}],'compliance':[{'name':'AUTHENTICATION',score:100}]}},'trends':{'daily':[{'label':'2024-05-01','customer':95,'business':90,'compliance':100,'avg':95}]},'caseLog':[{'caseId':'123','reviewDate':'2024-05-01','customer':1,'business':1,'compliance':1,'comments':'Good job'}]},'allAgents':[{'ldap':'agent1'}],'allSupervisors':['Sup1'],'allManagers':['Mgr1']};
 var google = { script: { run: { withSuccessHandler: function(cb) { return { clientGetMyQuality: function(ldap, month) { cb({hasData: true, stats: {customer: 96, business: 92, compliance: 100, count: 10, groupedParams: {customer: [{name: 'LISTENING', score: 95}], business: [{name: 'CATEGORIZATION', score: 90}], compliance: [{name: 'AUTHENTICATION', score: 100}]}}, trends: {daily: [{label: '2024-05-01', customer: 95, business: 90, compliance: 100, avg: 95}]}, caseLog: [{caseId: '123', reviewDate: '2024-05-01', customer: 1, business: 1, compliance: 1, comments: 'Good job'}]}); } }; } } } };
 // ============================================================
 // QualityView_JS — Core Logic for Quality Dashboard
@@ -496,11 +496,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function initApp() {
   var b = window.BOOTSTRAP_DATA;
-  if (!b) return;
+  if (!b || b.error) {
+    console.error('Bootstrap Error:', b ? b.error : 'No data');
+    document.getElementById('app-loader').innerHTML =
+      '<div class="text-center">' +
+      '<h2 style="color:var(--error)">Initialization Error</h2>' +
+      '<p>' + (b ? b.error : 'Failed to load dashboard data.') + '</p>' +
+      '<button class="q-pill-select mt-16" onclick="location.reload()">Retry</button>' +
+      '</div>';
+    return;
+  }
 
   STATE.session = b.session;
   STATE.agent = b.session.ldap;
-  STATE.month = b.months[0] || '';
+  STATE.month = (b.months && b.months.length > 0) ? b.months[0] : '';
   document.getElementById('agent-ldap-input').value = b.session.ldap;
 
   // Render Months
