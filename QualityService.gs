@@ -62,11 +62,40 @@ var Q_TARGETS = {
   COMPLIANCE: 99.50
 };
 
+var Q_PARAM_GROUPS = {
+  customer: ['LISTENING', 'PROBING', 'COMPLETE_RESOLUTION', 'TROUBLESHOOTING', 'USER_EXPECTATIONS', 'EMPATHY', 'OWNERSHIP', 'REFUNDS', 'RESPONSIVENESS'],
+  business: ['CONSULTS_ESCALATIONS', 'CASE_DETAILS', 'CATEGORIZATION', 'CSAT_REMINDER', 'CASE_STATE', 'OPENING_CLOSING', 'LANGUAGE_PROFICIENCY'],
+  compliance: ['AUTHENTICATION', 'GOOGLE_ONLY_INFO', 'PROFESSIONAL_CONDUCT', 'PAYMENT_COMPLAINTS']
+};
+
+var Q_PARAM_COLS = [].concat(Q_PARAM_GROUPS.customer, Q_PARAM_GROUPS.business, Q_PARAM_GROUPS.compliance);
+
 // ── APPS SCRIPT WEB APP ───────────────────────────────────────────────────
 
 function doGet() {
-  return HtmlService.createTemplateFromFile('QualityView')
-    .evaluate()
+  var template = HtmlService.createTemplateFromFile('QualityView');
+
+  // Pre-fetch critical data for instant loading
+  var session = clientGetSession();
+  var months = clientGetAvailableQualityMonths();
+  var initialMonth = months[0] || '';
+  var initialData = clientGetMyQuality(session.ldap, initialMonth);
+
+  // All agents for the dropdown
+  var allAgents = clientGetAllAgents();
+  var allSupervisors = clientGetAllSupervisors();
+  var allManagers = clientGetAllManagers();
+
+  template.bootstrap = JSON.stringify({
+    session: session,
+    months: months,
+    initialData: initialData,
+    allAgents: allAgents,
+    allSupervisors: allSupervisors,
+    allManagers: allManagers
+  });
+
+  return template.evaluate()
     .setTitle('Quality Dashboard')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -75,6 +104,18 @@ function doGet() {
 // ── DATA LOADING ──────────────────────────────────────────────────────────
 
 function getRawQualityData() {
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'quality_raw_data_v1';
+  var cached = cache.get(cacheKey);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch(e) {
+      Logger.log('Cache parse error: ' + e);
+    }
+  }
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(QUALITY_SHEET_NAME);
   if (!sheet) return [];
@@ -82,7 +123,18 @@ function getRawQualityData() {
   var raw = sheet.getDataRange().getValues();
   if (raw.length < 2) return [];
 
-  return raw.slice(1);
+  var data = raw.slice(1);
+
+  try {
+    var serialized = JSON.stringify(data);
+    if (serialized.length < 100000) { // Cache size limit
+      cache.put(cacheKey, serialized, 600); // 10 min cache
+    }
+  } catch(e) {
+    Logger.log('Cache write error: ' + e);
+  }
+
+  return data;
 }
 
 function getAvailableQualityMonths() {
@@ -127,23 +179,16 @@ function aggregateQualityRows(rows) {
   if (rows.length === 0) return null;
 
   var customerSum = 0, businessSum = 0, complianceSum = 0;
-
   var params = {};
-  var paramGroups = {
-    customer: ['LISTENING', 'PROBING', 'COMPLETE_RESOLUTION', 'TROUBLESHOOTING', 'USER_EXPECTATIONS', 'EMPATHY', 'OWNERSHIP', 'REFUNDS', 'RESPONSIVENESS'],
-    business: ['CONSULTS_ESCALATIONS', 'CASE_DETAILS', 'CATEGORIZATION', 'CSAT_REMINDER', 'CASE_STATE', 'OPENING_CLOSING', 'LANGUAGE_PROFICIENCY'],
-    compliance: ['AUTHENTICATION', 'GOOGLE_ONLY_INFO', 'PROFESSIONAL_CONDUCT', 'PAYMENT_COMPLAINTS']
-  };
 
-  var paramCols = [].concat(paramGroups.customer, paramGroups.business, paramGroups.compliance);
-  paramCols.forEach(function(p) { params[p] = { yes: 0, total: 0 }; });
+  Q_PARAM_COLS.forEach(function(p) { params[p] = { yes: 0, total: 0 }; });
 
   rows.forEach(function(r) {
     customerSum += (parseFloat(r[Q_COLS.CUSTOMER_CRITICAL]) || 0);
     businessSum += (parseFloat(r[Q_COLS.BUSINESS_CRITICAL]) || 0);
     complianceSum += (parseFloat(r[Q_COLS.COMPLIANCE_CRITICAL]) || 0);
 
-    paramCols.forEach(function(p) {
+    Q_PARAM_COLS.forEach(function(p) {
       var val = String(r[Q_COLS[p]]).trim().toLowerCase();
       if (val === 'yes' || val === 'no' || val === '1' || val === '0') {
         params[p].total++;
@@ -154,14 +199,14 @@ function aggregateQualityRows(rows) {
 
   var count = rows.length;
   var paramScores = {};
-  paramCols.forEach(function(p) {
+  Q_PARAM_COLS.forEach(function(p) {
     paramScores[p] = params[p].total > 0 ? (params[p].yes / params[p].total) * 100 : null;
   });
 
   var groupedParams = {
-    customer: paramGroups.customer.map(p => ({ name: p, score: paramScores[p] })),
-    business: paramGroups.business.map(p => ({ name: p, score: paramScores[p] })),
-    compliance: paramGroups.compliance.map(p => ({ name: p, score: paramScores[p] }))
+    customer: Q_PARAM_GROUPS.customer.map(p => ({ name: p, score: paramScores[p] })),
+    business: Q_PARAM_GROUPS.business.map(p => ({ name: p, score: paramScores[p] })),
+    compliance: Q_PARAM_GROUPS.compliance.map(p => ({ name: p, score: paramScores[p] }))
   };
 
   return {

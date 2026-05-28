@@ -454,8 +454,12 @@ body {
     <div id="view-content"></div>
   </div>
 
+  <script>
+    // Injected from server
+  </script>
 <script>
-var google = { script: { run: { withSuccessHandler: function(cb) { return { clientGetSession: function() { cb({ldap: 'test_user'}); }, clientGetAvailableQualityMonths: function() { cb(['2024-05', '2024-04']); }, clientGetAllAgents: function() { cb([{ldap: 'agent1'}, {ldap: 'agent2'}]); }, clientGetAllSupervisors: function() { cb(['Sup1', 'Sup2']); }, clientGetAllManagers: function() { cb(['Mgr1', 'Mgr2']); }, clientGetMyQuality: function(ldap, month) { cb({hasData: true, stats: {customer: 96, business: 92, compliance: 100, count: 10, groupedParams: {customer: [{name: 'LISTENING', score: 95}], business: [{name: 'CATEGORIZATION', score: 90}], compliance: [{name: 'AUTHENTICATION', score: 100}]}}, trends: {daily: [{label: '2024-05-01', customer: 95, business: 90, compliance: 100, avg: 95}]}, caseLog: [{caseId: '123', reviewDate: '2024-05-01', customer: 1, business: 1, compliance: 1, comments: 'Good job'}]}); } }; } } } };
+window.BOOTSTRAP_DATA = JSON.parse(JSON.stringify({'session':{'ldap':'test_user'},'months':['2024-05'],'initialData':{'hasData':true,'stats':{'customer':96,'business':92,'compliance':100,'count':10,'groupedParams':{'customer':[{'name':'LISTENING','score':95}],'business':[{'name':'CATEGORIZATION','score':90}],'compliance':[{'name':'AUTHENTICATION',score:100}]}},'trends':{'daily':[{'label':'2024-05-01','customer':95,'business':90,'compliance':100,'avg':95}]},'caseLog':[{'caseId':'123','reviewDate':'2024-05-01','customer':1,'business':1,'compliance':1,'comments':'Good job'}]},'allAgents':[{'ldap':'agent1'}],'allSupervisors':['Sup1'],'allManagers':['Mgr1']}));
+var google = { script: { run: { withSuccessHandler: function(cb) { return { clientGetMyQuality: function(ldap, month) { cb({hasData: true, stats: {customer: 96, business: 92, compliance: 100, count: 10, groupedParams: {customer: [{name: 'LISTENING', score: 95}], business: [{name: 'CATEGORIZATION', score: 90}], compliance: [{name: 'AUTHENTICATION', score: 100}]}}, trends: {daily: [{label: '2024-05-01', customer: 95, business: 90, compliance: 100, avg: 95}]}, caseLog: [{caseId: '123', reviewDate: '2024-05-01', customer: 1, business: 1, compliance: 1, comments: 'Good job'}]}); } }; } } } };
 // ============================================================
 // QualityView_JS — Core Logic for Quality Dashboard
 // ============================================================
@@ -491,47 +495,35 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initApp() {
-  google.script.run
-    .withSuccessHandler(function(session) {
-      STATE.session = session;
-      STATE.agent = session.ldap;
-      document.getElementById('agent-ldap-input').value = session.ldap;
+  var b = window.BOOTSTRAP_DATA;
+  if (!b) return;
 
-      loadAvailableMonths();
-      loadDatalists();
-    })
-    .clientGetSession();
-}
+  STATE.session = b.session;
+  STATE.agent = b.session.ldap;
+  STATE.month = b.months[0] || '';
+  document.getElementById('agent-ldap-input').value = b.session.ldap;
 
-function loadAvailableMonths() {
-  google.script.run
-    .withSuccessHandler(function(months) {
-      var picker = document.getElementById('quality-month-picker');
-      if (months && months.length > 0) {
-        picker.innerHTML = months.map((m, i) => `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`).join('');
-        STATE.month = months[0];
-      } else {
-        picker.innerHTML = '<option value="">No data available</option>';
-      }
+  // Render Months
+  var picker = document.getElementById('quality-month-picker');
+  if (b.months && b.months.length > 0) {
+    picker.innerHTML = b.months.map((m, i) => `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`).join('');
+  } else {
+    picker.innerHTML = '<option value="">No data available</option>';
+  }
 
-      hideLoader();
-      refreshView();
-    })
-    .clientGetAvailableQualityMonths();
-}
+  // Populate Datalists
+  document.getElementById('agent-list').innerHTML = (b.allAgents || []).map(a => `<option value="${a.ldap}">`).join('');
+  document.getElementById('supervisor-list').innerHTML = (b.allSupervisors || []).map(s => `<option value="${s}">`).join('');
+  document.getElementById('manager-list').innerHTML = (b.allManagers || []).map(m => `<option value="${m}">`).join('');
 
-function loadDatalists() {
-  google.script.run.withSuccessHandler(function(agents) {
-    document.getElementById('agent-list').innerHTML = agents.map(a => `<option value="${a.ldap}">`).join('');
-  }).clientGetAllAgents();
+  hideLoader();
 
-  google.script.run.withSuccessHandler(function(sups) {
-    document.getElementById('supervisor-list').innerHTML = sups.map(s => `<option value="${s}">`).join('');
-  }).clientGetAllSupervisors();
-
-  google.script.run.withSuccessHandler(function(mgrs) {
-    document.getElementById('manager-list').innerHTML = mgrs.map(m => `<option value="${m}">`).join('');
-  }).clientGetAllManagers();
+  // Instant render initial data
+  if (b.initialData) {
+    renderAgentView(b.initialData);
+  } else {
+    refreshView();
+  }
 }
 
 function hideLoader() {
@@ -881,20 +873,65 @@ function renderRadarChart(s) {
   var options = {
     series: [{
       name: 'Score',
-      data: [s.customer, s.business, s.compliance]
+      data: [
+        parseFloat((s.customer || 0).toFixed(1)),
+        parseFloat((s.business || 0).toFixed(1)),
+        parseFloat((s.compliance || 0).toFixed(1))
+      ]
     }, {
       name: 'Target',
       data: [TARGETS.CUSTOMER, TARGETS.BUSINESS, TARGETS.COMPLIANCE]
     }],
-    chart: { height: 350, type: 'radar', toolbar: { show: false } },
-    xaxis: { categories: ['Customer', 'Business', 'Compliance'] },
-    yaxis: { show: false, min: 0, max: 100 },
+    chart: {
+      height: 400,
+      type: 'radar',
+      toolbar: { show: false },
+      animations: { enabled: true, speed: 800 }
+    },
+    xaxis: {
+      categories: ['Customer', 'Business', 'Compliance'],
+      labels: {
+        style: {
+          colors: ['#86868b', '#86868b', '#86868b'],
+          fontSize: '12px',
+          fontWeight: 700
+        }
+      }
+    },
+    yaxis: {
+      show: false,
+      min: 0,
+      max: 100,
+      tickAmount: 4
+    },
     colors: [COLORS.BLUE, COLORS.RED],
-    stroke: { width: 2 },
-    fill: { opacity: 0.1 },
-    markers: { size: 4 }
+    stroke: { width: 3, curve: 'straight' },
+    fill: { opacity: 0.2, type: 'solid' },
+    markers: { size: 5, hover: { size: 8 } },
+    legend: {
+      position: 'bottom',
+      offsetY: 0,
+      fontSize: '13px',
+      fontWeight: 600
+    },
+    plotOptions: {
+      radar: {
+        polygons: {
+          strokeColors: '#e8e8ed',
+          connectorColors: '#e8e8ed',
+          fill: {
+            colors: ['#f8f8f9', '#fff']
+          }
+        }
+      }
+    }
   };
-  new ApexCharts(document.querySelector("#radar-chart"), options).render();
+  var el = document.querySelector("#radar-chart");
+  if (el) {
+    el.innerHTML = '';
+    var chart = new ApexCharts(el, options);
+    chart.render();
+  }
 }
 
 function renderTrendChart(elId, data) {
