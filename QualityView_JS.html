@@ -1,0 +1,551 @@
+<script>
+// ============================================================
+// QualityView_JS — Core Logic for Quality Dashboard
+// ============================================================
+
+var STATE = {
+  activeTab: 'agent',
+  month: '',
+  agent: '',
+  supervisor: '',
+  manager: '',
+  session: null
+};
+
+var COLORS = {
+  BLUE: '#0071e3',
+  GREEN: '#34c759',
+  RED: '#ff3b30',
+  ORANGE: '#ff9500',
+  TEAL: '#30b0c7',
+  PURPLE: '#af52de'
+};
+
+var TARGETS = {
+  CUSTOMER: 95,
+  BUSINESS: 90,
+  COMPLIANCE: 99.5
+};
+
+// ── INITIALIZATION ────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', function() {
+  initApp();
+});
+
+function initApp() {
+  var b = window.BOOTSTRAP_DATA;
+  if (!b || b.error) {
+    console.error('Bootstrap Error:', b ? b.error : 'No data');
+    document.getElementById('app-loader').innerHTML =
+      '<div class="text-center">' +
+      '<h2 style="color:var(--error)">Initialization Error</h2>' +
+      '<p>' + (b ? b.error : 'Failed to load dashboard data.') + '</p>' +
+      '<button class="q-pill-select mt-16" onclick="location.reload()">Retry</button>' +
+      '</div>';
+    return;
+  }
+
+  STATE.session = b.session;
+  STATE.agent = b.session.ldap;
+  STATE.month = (b.months && b.months.length > 0) ? b.months[0] : '';
+  document.getElementById('agent-ldap-input').value = b.session.ldap;
+
+  // Render Months
+  var picker = document.getElementById('quality-month-picker');
+  if (b.months && b.months.length > 0) {
+    picker.innerHTML = b.months.map((m, i) => `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`).join('');
+  } else {
+    picker.innerHTML = '<option value="">No data available</option>';
+  }
+
+  // Populate Datalists
+  document.getElementById('agent-list').innerHTML = (b.allAgents || []).map(a => `<option value="${a.ldap}">`).join('');
+  document.getElementById('supervisor-list').innerHTML = (b.allSupervisors || []).map(s => `<option value="${s}">`).join('');
+  document.getElementById('manager-list').innerHTML = (b.allManagers || []).map(m => `<option value="${m}">`).join('');
+
+  hideLoader();
+
+  // Instant render initial data
+  if (b.initialData) {
+    renderAgentView(b.initialData);
+  } else {
+    refreshView();
+  }
+}
+
+function hideLoader() {
+  document.getElementById('app-loader').style.display = 'none';
+  document.getElementById('quality-root').style.display = 'block';
+}
+
+// ── NAVIGATION & FILTERS ──────────────────────────────────────────────────
+
+function switchTab(tabId) {
+  STATE.activeTab = tabId;
+
+  // Update Tabs UI
+  ['agent', 'team', 'cluster'].forEach(t => {
+    var tabEl = document.getElementById(`tab-${t}`);
+    var selEl = document.getElementById(`selector-${t}`);
+    if (tabEl) tabEl.classList.toggle('active', t === tabId);
+    if (selEl) selEl.style.display = t === tabId ? 'block' : 'none';
+  });
+
+  refreshView();
+}
+
+function onMonthChange(val) {
+  STATE.month = val;
+  refreshView();
+}
+
+function onAgentChange(val) {
+  STATE.agent = val;
+  refreshView();
+}
+
+function onSupervisorChange(val) {
+  STATE.supervisor = val;
+  refreshView();
+}
+
+function onManagerChange(val) {
+  STATE.manager = val;
+  refreshView();
+}
+
+function refreshView() {
+  var content = document.getElementById('view-content');
+  content.innerHTML = '<div class="text-center py-40"><div class="q-spinner mx-auto mb-16"></div><p>Fetching data...</p></div>';
+
+  if (STATE.activeTab === 'agent') {
+    google.script.run.withSuccessHandler(renderAgentView).clientGetMyQuality(STATE.agent, STATE.month);
+  } else if (STATE.activeTab === 'team') {
+    if (!STATE.supervisor) {
+      content.innerHTML = '<div class="q-card text-center"><h3>Please select a Supervisor</h3></div>';
+      return;
+    }
+    google.script.run.withSuccessHandler(renderTeamView).clientGetTeamQuality(STATE.supervisor, STATE.month);
+  } else if (STATE.activeTab === 'cluster') {
+    if (!STATE.manager) {
+      content.innerHTML = '<div class="q-card text-center"><h3>Please select a Manager</h3></div>';
+      return;
+    }
+    google.script.run.withSuccessHandler(renderClusterView).clientGetClusterQuality(STATE.manager, STATE.month);
+  }
+}
+
+// ── RENDERING ─────────────────────────────────────────────────────────────
+
+function renderAgentView(d) {
+  if (!d || !d.hasData) {
+    document.getElementById('view-content').innerHTML = '<div class="q-card text-center"><h3>No data found for this agent and month</h3></div>';
+    return;
+  }
+
+  var s = d.stats;
+  var html = `
+    <div class="q-score-grid">
+      ${renderScoreCard('Customer', s.customer, TARGETS.CUSTOMER, COLORS.BLUE)}
+      ${renderScoreCard('Business', s.business, TARGETS.BUSINESS, COLORS.GREEN)}
+      ${renderScoreCard('Compliance', s.compliance, TARGETS.COMPLIANCE, COLORS.RED)}
+      ${renderScoreCard('Total Audits', s.count, null, COLORS.PURPLE)}
+    </div>
+
+    <div class="q-chart-row">
+      <div class="q-card q-chart-card">
+        <div class="q-chart-title mb-24">Performance Parameters</div>
+        ${renderParameterList(s.groupedParams)}
+      </div>
+      <div class="q-card q-chart-card">
+        <div class="q-chart-title mb-24">Quality Radar</div>
+        <div id="radar-chart"></div>
+      </div>
+    </div>
+
+    <div class="q-card mb-32">
+      <div class="q-chart-header">
+        <div class="q-chart-title">Trend Analysis</div>
+        <select class="q-pill-select" onchange="updateTrendChart('agent', this.value)">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
+      </div>
+      <div id="trend-chart" style="height: 350px"></div>
+    </div>
+
+    <div class="q-card">
+      <div class="q-chart-title mb-24">Recent Audits</div>
+      <div class="q-table-wrapper">
+        <table class="q-table">
+          <thead>
+            <tr>
+              <th>Case ID</th>
+              <th>Date</th>
+              <th>Customer</th>
+              <th>Business</th>
+              <th>Compliance</th>
+              <th>Comments</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.caseLog.map(c => `
+              <tr>
+                <td><a href="https://cases.connect.corp.google.com/${c.caseId}" target="_blank" style="color:var(--accent);font-weight:600">${c.caseId}</a></td>
+                <td>${c.reviewDate}</td>
+                <td>${renderStatusIcon(c.customer)}</td>
+                <td>${renderStatusIcon(c.business)}</td>
+                <td>${renderStatusIcon(c.compliance)}</td>
+                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c.comments}">${c.comments || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('view-content').innerHTML = html;
+
+  renderRadarChart(s);
+  renderTrendChart('trend-chart', d.trends.daily);
+  window._activeTrends = d.trends;
+}
+
+function renderTeamView(d) {
+  if (!d || !d.hasData) {
+    document.getElementById('view-content').innerHTML = '<div class="q-card text-center"><h3>No data found for this team and month</h3></div>';
+    return;
+  }
+
+  var s = d.stats;
+  var html = `
+    <div class="q-score-grid">
+      ${renderScoreCard('Team Customer', s.customer, TARGETS.CUSTOMER, COLORS.BLUE)}
+      ${renderScoreCard('Team Business', s.business, TARGETS.BUSINESS, COLORS.GREEN)}
+      ${renderScoreCard('Team Compliance', s.compliance, TARGETS.COMPLIANCE, COLORS.RED)}
+      ${renderScoreCard('Team Audits', s.count, null, COLORS.PURPLE)}
+    </div>
+
+    <div class="q-chart-row">
+      <div class="q-card q-chart-card">
+        <div class="q-chart-title mb-24">Team Risk Areas</div>
+        ${renderParameterList(s.groupedParams)}
+      </div>
+      <div class="q-card q-chart-card">
+        <div class="q-chart-title mb-24">Team Performance Trend</div>
+        <div class="q-chart-header">
+           <select class="q-pill-select" onchange="updateTrendChart('team', this.value)">
+            <option value="weekly">Weekly</option>
+            <option value="daily">Daily</option>
+          </select>
+        </div>
+        <div id="team-trend-chart" style="height: 350px"></div>
+      </div>
+    </div>
+
+    <div class="q-card">
+      <div class="q-chart-title mb-24">Agent Performance Breakdown</div>
+      <div class="q-table-wrapper">
+        <table class="q-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Audits</th>
+              <th>Customer</th>
+              <th>Business</th>
+              <th>Compliance</th>
+              <th>Avg Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.agents.map(a => {
+              var avg = (a.stats.customer + a.stats.business + a.stats.compliance) / 3;
+              return `
+                <tr class="clickable" onclick="viewAgent('${a.ldap}')">
+                  <td style="font-weight:600">${a.ldap}</td>
+                  <td>${a.stats.count}</td>
+                  <td style="color:${a.stats.customer >= TARGETS.CUSTOMER ? COLORS.GREEN : COLORS.RED}">${a.stats.customer.toFixed(1)}%</td>
+                  <td style="color:${a.stats.business >= TARGETS.BUSINESS ? COLORS.GREEN : COLORS.RED}">${a.stats.business.toFixed(1)}%</td>
+                  <td style="color:${a.stats.compliance >= TARGETS.COMPLIANCE ? COLORS.GREEN : COLORS.RED}">${a.stats.compliance.toFixed(1)}%</td>
+                  <td style="font-weight:800">${avg.toFixed(1)}%</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('view-content').innerHTML = html;
+  renderTrendChart('team-trend-chart', d.trends.weekly);
+  window._activeTrends = d.trends;
+}
+
+function renderClusterView(d) {
+  if (!d || !d.hasData) {
+    document.getElementById('view-content').innerHTML = '<div class="q-card text-center"><h3>No data found for this cluster and month</h3></div>';
+    return;
+  }
+
+  var s = d.stats;
+  var html = `
+    <div class="q-score-grid">
+      ${renderScoreCard('Cluster Customer', s.customer, TARGETS.CUSTOMER, COLORS.BLUE)}
+      ${renderScoreCard('Cluster Business', s.business, TARGETS.BUSINESS, COLORS.GREEN)}
+      ${renderScoreCard('Cluster Compliance', s.compliance, TARGETS.COMPLIANCE, COLORS.RED)}
+      ${renderScoreCard('Cluster Audits', s.count, null, COLORS.PURPLE)}
+    </div>
+
+    <div class="q-card mb-32">
+      <div class="q-chart-header">
+        <div class="q-chart-title">Cluster Performance Trend</div>
+        <select class="q-pill-select" onchange="updateTrendChart('cluster', this.value)">
+          <option value="weekly">Weekly</option>
+          <option value="daily">Daily</option>
+        </select>
+      </div>
+      <div id="cluster-trend-chart" style="height: 400px"></div>
+    </div>
+
+    <div class="q-chart-row">
+       <div class="q-card q-chart-card">
+          <div class="q-chart-title mb-24">Cluster Parameter Breakdown</div>
+          ${renderParameterList(s.groupedParams)}
+       </div>
+       <div class="q-card q-chart-card">
+          <div class="q-chart-title mb-24">Supervisor Comparison</div>
+          <div id="sup-bar-chart" style="height: 450px"></div>
+       </div>
+    </div>
+
+    <div class="q-card mt-32">
+      <div class="q-chart-title mb-24">Detailed Supervisor Metrics</div>
+      <div class="q-table-wrapper">
+        <table class="q-table">
+          <thead>
+            <tr>
+              <th>Supervisor</th>
+              <th>Audits</th>
+              <th>Customer</th>
+              <th>Business</th>
+              <th>Compliance</th>
+              <th>Avg Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.supervisors.map(sup => {
+              var avg = (sup.stats.customer + sup.stats.business + sup.stats.compliance) / 3;
+              return `
+                <tr class="clickable" onclick="viewSupervisor('${sup.name}')">
+                  <td style="font-weight:600">${sup.name}</td>
+                  <td>${sup.stats.count}</td>
+                  <td style="color:${sup.stats.customer >= TARGETS.CUSTOMER ? COLORS.GREEN : COLORS.RED}">${sup.stats.customer.toFixed(1)}%</td>
+                  <td style="color:${sup.stats.business >= TARGETS.BUSINESS ? COLORS.GREEN : COLORS.RED}">${sup.stats.business.toFixed(1)}%</td>
+                  <td style="color:${sup.stats.compliance >= TARGETS.COMPLIANCE ? COLORS.GREEN : COLORS.RED}">${sup.stats.compliance.toFixed(1)}%</td>
+                  <td style="font-weight:800">${avg.toFixed(1)}%</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('view-content').innerHTML = html;
+  renderTrendChart('cluster-trend-chart', d.trends.weekly);
+  renderSupervisorBarChart(d.supervisors);
+  window._activeTrends = d.trends;
+}
+
+// ── COMPONENTS ────────────────────────────────────────────────────────────
+
+function renderScoreCard(label, val, target, color) {
+  var isPass = target === null || val >= target;
+  var valDisplay = target === null ? val : (val ? val.toFixed(1) + '%' : '0.0%');
+  var statusText = target === null ? 'Audits' : (isPass ? 'On Target' : 'Below Target');
+  var statusClass = isPass ? 'status-on' : 'status-off';
+
+  return `
+    <div class="q-score-card" style="border-top: 4px solid ${color}">
+      <div class="q-score-label">${label}</div>
+      <div class="q-score-value" style="color:${color}">${valDisplay}</div>
+      <div class="q-score-status ${statusClass}">
+        <span>${statusText}</span>
+        ${target ? `<span style="color:var(--text-hint);font-weight:400;margin-left:auto">Target: ${target}%</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderStatusIcon(val) {
+  var pass = val == 1 || String(val).toLowerCase() === 'yes';
+  return pass
+    ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:20px;height:20px" class="icon-pass"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" /></svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:20px;height:20px" class="icon-fail"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" /></svg>`;
+}
+
+function renderParameterList(grouped) {
+  if (!grouped) return '<p>No parameter data available</p>';
+  var html = '<div style="display:flex;flex-direction:column;gap:16px">';
+  ['customer', 'business', 'compliance'].forEach(key => {
+    var group = grouped[key];
+    if (!group) return;
+    var color = key === 'customer' ? COLORS.BLUE : (key === 'business' ? COLORS.GREEN : COLORS.RED);
+    html += `<div><div style="font-size:11px;font-weight:800;color:${color};text-transform:uppercase;margin-bottom:8px">${key}</div>`;
+    group.forEach(p => {
+      var score = p.score === null ? 0 : p.score;
+      var barColor = score >= 95 ? COLORS.GREEN : (score >= 85 ? COLORS.ORANGE : COLORS.RED);
+      html += `
+        <div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;margin-bottom:4px">
+            <span style="color:var(--text-secondary)">${p.name.replace(/_/g,' ').toLowerCase()}</span>
+            <span>${p.score !== null ? p.score.toFixed(0) + '%' : '-'}</span>
+          </div>
+          <div class="q-param-bar-bg"><div class="q-param-bar-fill" style="width:${score}%;background:${barColor}"></div></div>
+        </div>
+      `;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+// ── CHARTS ────────────────────────────────────────────────────────────────
+
+function renderRadarChart(s) {
+  var options = {
+    series: [{
+      name: 'Score',
+      data: [
+        parseFloat((s.customer || 0).toFixed(1)),
+        parseFloat((s.business || 0).toFixed(1)),
+        parseFloat((s.compliance || 0).toFixed(1))
+      ]
+    }, {
+      name: 'Target',
+      data: [TARGETS.CUSTOMER, TARGETS.BUSINESS, TARGETS.COMPLIANCE]
+    }],
+    chart: {
+      height: 400,
+      type: 'radar',
+      toolbar: { show: false },
+      animations: { enabled: true, speed: 800 }
+    },
+    xaxis: {
+      categories: ['Customer', 'Business', 'Compliance'],
+      labels: {
+        style: {
+          colors: ['#86868b', '#86868b', '#86868b'],
+          fontSize: '12px',
+          fontWeight: 700
+        }
+      }
+    },
+    yaxis: {
+      show: false,
+      min: 0,
+      max: 100,
+      tickAmount: 4
+    },
+    colors: [COLORS.BLUE, COLORS.RED],
+    stroke: { width: 3, curve: 'straight' },
+    fill: { opacity: 0.2, type: 'solid' },
+    markers: { size: 5, hover: { size: 8 } },
+    legend: {
+      position: 'bottom',
+      offsetY: 0,
+      fontSize: '13px',
+      fontWeight: 600
+    },
+    plotOptions: {
+      radar: {
+        polygons: {
+          strokeColors: '#e8e8ed',
+          connectorColors: '#e8e8ed',
+          fill: {
+            colors: ['#f8f8f9', '#fff']
+          }
+        }
+      }
+    }
+  };
+  var el = document.querySelector("#radar-chart");
+  if (el) {
+    el.innerHTML = '';
+    var chart = new ApexCharts(el, options);
+    chart.render();
+  }
+}
+
+function renderTrendChart(elId, data) {
+  if (!data || data.length === 0) {
+    document.getElementById(elId).innerHTML = '<p class="text-center">No trend data available</p>';
+    return;
+  }
+  var options = {
+    series: [
+      { name: 'Average', data: data.map(d => d.avg.toFixed(1)) },
+      { name: 'Customer', data: data.map(d => d.customer.toFixed(1)) },
+      { name: 'Business', data: data.map(d => d.business.toFixed(1)) },
+      { name: 'Compliance', data: data.map(d => d.compliance.toFixed(1)) }
+    ],
+    chart: { type: 'line', height: '100%', toolbar: { show: false }, zoom: { enabled: false } },
+    colors: [COLORS.BLUE, COLORS.TEAL, COLORS.GREEN, COLORS.RED],
+    stroke: { curve: 'smooth', width: 3 },
+    xaxis: { categories: data.map(d => d.label) },
+    yaxis: { max: 100, min: 0 },
+    grid: { borderColor: 'var(--surface-3)' },
+    tooltip: { theme: 'dark' }
+  };
+  var el = document.getElementById(elId);
+  el.innerHTML = '';
+  new ApexCharts(el, options).render();
+}
+
+function updateTrendChart(view, granularity) {
+  var elId = view === 'agent' ? 'trend-chart' : (view === 'team' ? 'team-trend-chart' : 'cluster-trend-chart');
+  if (window._activeTrends && window._activeTrends[granularity]) {
+    renderTrendChart(elId, window._activeTrends[granularity]);
+  }
+}
+
+function renderSupervisorBarChart(sups) {
+  if (!sups || sups.length === 0) return;
+  var options = {
+    series: [
+      { name: 'Customer', data: sups.map(s => s.stats.customer.toFixed(1)) },
+      { name: 'Business', data: sups.map(s => s.stats.business.toFixed(1)) },
+      { name: 'Compliance', data: sups.map(s => s.stats.compliance.toFixed(1)) }
+    ],
+    chart: { type: 'bar', height: '100%', toolbar: { show: false } },
+    plotOptions: { bar: { borderRadius: 4, columnWidth: '60%' } },
+    colors: [COLORS.BLUE, COLORS.GREEN, COLORS.RED],
+    xaxis: { categories: sups.map(s => s.name) },
+    yaxis: { max: 100 },
+    legend: { position: 'top' }
+  };
+  new ApexCharts(document.querySelector("#sup-bar-chart"), options).render();
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────
+
+function viewAgent(ldap) {
+  STATE.agent = ldap;
+  var input = document.getElementById('agent-ldap-input');
+  if (input) input.value = ldap;
+  switchTab('agent');
+}
+
+function viewSupervisor(name) {
+  STATE.supervisor = name;
+  var input = document.getElementById('supervisor-input');
+  if (input) input.value = name;
+  switchTab('team');
+}
+
+</script>
