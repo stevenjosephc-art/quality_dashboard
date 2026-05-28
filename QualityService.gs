@@ -53,7 +53,8 @@ var Q_COLS = {
   AGENT_WORKFLOW: 37,    // AL
 
   SUPERVISOR: 66,        // BO
-  MANAGER: 67            // BP
+  MANAGER: 67,           // BP
+  LOB: 69                // BR
 };
 
 var Q_TARGETS = {
@@ -474,4 +475,72 @@ function clientGetSession() {
     ldap: email.split('@')[0],
     email: email
   };
+}
+
+function clientGetHierarchy() {
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'quality_hierarchy_v1';
+
+  try {
+    var chunkCount = cache.get(cacheKey + '_chunks');
+    if (chunkCount) {
+      var assembled = '';
+      for (var c = 0; c < parseInt(chunkCount); c++) {
+        var chunk = cache.get(cacheKey + '_chunk_' + c);
+        if (!chunk) { assembled = null; break; }
+        assembled += chunk;
+      }
+      if (assembled) return JSON.parse(assembled);
+    }
+  } catch(e) {
+    Logger.log('Hierarchy cache read error: ' + e.message);
+  }
+
+  var rows = getRawQualityData();
+  var hierarchy = {};
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var lob = String(r[Q_COLS.LOB] || 'Unknown LOB').trim();
+    var sup = String(r[Q_COLS.SUPERVISOR] || 'Unknown Supervisor').trim();
+    var agent = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
+
+    if (!agent) continue;
+
+    if (!hierarchy[lob]) hierarchy[lob] = {};
+    if (!hierarchy[lob][sup]) hierarchy[lob][sup] = {};
+
+    // Using an object as a set for agents to ensure uniqueness
+    hierarchy[lob][sup][agent] = true;
+  }
+
+  // Convert Agent sets to sorted arrays
+  var result = {};
+  var lobs = Object.keys(hierarchy).sort();
+  for (var j = 0; j < lobs.length; j++) {
+    var l = lobs[j];
+    result[l] = {};
+    var sups = Object.keys(hierarchy[l]).sort();
+    for (var k = 0; k < sups.length; k++) {
+      var s = sups[k];
+      result[l][s] = Object.keys(hierarchy[l][s]).sort();
+    }
+  }
+
+  try {
+    var serialized = JSON.stringify(result);
+    var chunkSize = 90000;
+    var chunks = [];
+    for (var ci = 0; ci < serialized.length; ci += chunkSize) {
+      chunks.push(serialized.slice(ci, ci + chunkSize));
+    }
+    for (var j = 0; j < chunks.length; j++) {
+      cache.put(cacheKey + '_chunk_' + j, chunks[j], 21600);
+    }
+    cache.put(cacheKey + '_chunks', String(chunks.length), 21600);
+  } catch(e) {
+    Logger.log('Hierarchy cache write error: ' + e.message);
+  }
+
+  return result;
 }

@@ -6,10 +6,13 @@
 var STATE = {
   activeTab: 'agent',
   month: '',
+  lob: '',
+  agentSup: '',
   agent: '',
   supervisor: '',
   manager: '',
-  session: null
+  session: null,
+  hierarchy: null
 };
 
 var COLORS = {
@@ -44,12 +47,10 @@ function initApp() {
 
   try {
     STATE.session = b.session;
-    STATE.agent = b.session.ldap;
-    var agentInput = document.getElementById('agent-ldap-input');
-    if (agentInput) agentInput.value = b.session.ldap;
 
     // Lazy load supporting data
     loadMonths();
+    loadHierarchy();
     loadSelectors();
   } catch (e) {
     console.error('initApp Catch:', e);
@@ -96,21 +97,84 @@ function loadMonths() {
     .clientGetAvailableQualityMonths();
 }
 
-function loadSelectors() {
+function loadHierarchy() {
   google.script.run
-    .withSuccessHandler(function(agents) {
-      var list = document.getElementById('agent-list');
-      var html = '';
-      if (agents) {
-        for (var i = 0; i < agents.length; i++) {
-          html += '<option value="' + agents[i].ldap + '">';
-        }
-      }
-      list.innerHTML = html;
+    .withSuccessHandler(function(data) {
+      STATE.hierarchy = data;
+      populateLobs();
     })
-    .withFailureHandler(function(err) { console.error('Selectors Error (Agents):', err); })
-    .clientGetAllAgents();
+    .withFailureHandler(function(err) {
+      console.error('Hierarchy Error:', err);
+    })
+    .clientGetHierarchy();
+}
 
+function populateLobs() {
+  var select = document.getElementById('lob-select');
+  if (!STATE.hierarchy) return;
+
+  var lobs = Object.keys(STATE.hierarchy).sort();
+  var html = '<option value="">Select LOB...</option>';
+  for (var i = 0; i < lobs.length; i++) {
+    html += '<option value="' + lobs[i] + '">' + lobs[i] + '</option>';
+  }
+  select.innerHTML = html;
+}
+
+function onLobChange(val) {
+  STATE.lob = val;
+  STATE.agentSup = '';
+  STATE.agent = '';
+
+  var supSelect = document.getElementById('agent-sup-select');
+  var agentSelect = document.getElementById('agent-ldap-select');
+
+  if (!val) {
+    supSelect.innerHTML = '<option value="">Select Supervisor...</option>';
+    supSelect.disabled = true;
+    agentSelect.innerHTML = '<option value="">Select Agent...</option>';
+    agentSelect.disabled = true;
+    refreshView();
+    return;
+  }
+
+  var sups = Object.keys(STATE.hierarchy[val]).sort();
+  var html = '<option value="">Select Supervisor...</option>';
+  for (var i = 0; i < sups.length; i++) {
+    html += '<option value="' + sups[i] + '">' + sups[i] + '</option>';
+  }
+  supSelect.innerHTML = html;
+  supSelect.disabled = false;
+
+  agentSelect.innerHTML = '<option value="">Select Agent...</option>';
+  agentSelect.disabled = true;
+  refreshView();
+}
+
+function onAgentSupChange(val) {
+  STATE.agentSup = val;
+  STATE.agent = '';
+
+  var agentSelect = document.getElementById('agent-ldap-select');
+
+  if (!val || !STATE.lob) {
+    agentSelect.innerHTML = '<option value="">Select Agent...</option>';
+    agentSelect.disabled = true;
+    refreshView();
+    return;
+  }
+
+  var agents = STATE.hierarchy[STATE.lob][val];
+  var html = '<option value="">Select Agent...</option>';
+  for (var i = 0; i < agents.length; i++) {
+    html += '<option value="' + agents[i] + '">' + agents[i] + '</option>';
+  }
+  agentSelect.innerHTML = html;
+  agentSelect.disabled = false;
+  refreshView();
+}
+
+function loadSelectors() {
   google.script.run
     .withSuccessHandler(function(sups) {
       var list = document.getElementById('supervisor-list');
@@ -189,9 +253,13 @@ function onManagerChange(val) {
 
 function refreshView() {
   var content = document.getElementById('view-content');
-  content.innerHTML = '<div class="text-center py-40"><div class="q-spinner mx-auto mb-16"></div><p>Fetching data...</p></div>';
 
   if (STATE.activeTab === 'agent') {
+    if (!STATE.agent) {
+      content.innerHTML = '<div class="q-card text-center"><h3>Please select LOB, Supervisor, and Agent</h3></div>';
+      return;
+    }
+    content.innerHTML = '<div class="text-center py-40"><div class="q-spinner mx-auto mb-16"></div><p>Fetching data...</p></div>';
     google.script.run
       .withSuccessHandler(renderAgentView)
       .withFailureHandler(function(err) { showError('Server Error (Agent View)', err.message); })
@@ -201,6 +269,7 @@ function refreshView() {
       content.innerHTML = '<div class="q-card text-center"><h3>Please select a Supervisor</h3></div>';
       return;
     }
+    content.innerHTML = '<div class="text-center py-40"><div class="q-spinner mx-auto mb-16"></div><p>Fetching data...</p></div>';
     google.script.run
       .withSuccessHandler(renderTeamView)
       .withFailureHandler(function(err) { showError('Server Error (Team View)', err.message); })
@@ -210,6 +279,7 @@ function refreshView() {
       content.innerHTML = '<div class="q-card text-center"><h3>Please select a Manager</h3></div>';
       return;
     }
+    content.innerHTML = '<div class="text-center py-40"><div class="q-spinner mx-auto mb-16"></div><p>Fetching data...</p></div>';
     google.script.run
       .withSuccessHandler(renderClusterView)
       .withFailureHandler(function(err) { showError('Server Error (Cluster View)', err.message); })
@@ -605,9 +675,38 @@ function renderSupervisorBarChart(sups) {
 // ── HELPERS ───────────────────────────────────────────────────────────────
 
 function viewAgent(ldap) {
-  STATE.agent = ldap;
-  var input = document.getElementById('agent-ldap-input');
-  if (input) input.value = ldap;
+  if (!STATE.hierarchy) return;
+
+  // Find LOB and Supervisor for this LDAP
+  var foundLob = '', foundSup = '';
+  var lobs = Object.keys(STATE.hierarchy);
+  for (var i = 0; i < lobs.length; i++) {
+    var l = lobs[i];
+    var sups = Object.keys(STATE.hierarchy[l]);
+    for (var j = 0; j < sups.length; j++) {
+      var s = sups[j];
+      var agents = STATE.hierarchy[l][s];
+      if (agents.indexOf(ldap) !== -1) {
+        foundLob = l;
+        foundSup = s;
+        break;
+      }
+    }
+    if (foundLob) break;
+  }
+
+  if (foundLob) {
+    STATE.lob = foundLob;
+    STATE.agentSup = foundSup;
+    STATE.agent = ldap;
+
+    document.getElementById('lob-select').value = foundLob;
+    onLobChange(foundLob); // Populates and enables Sup select
+    document.getElementById('agent-sup-select').value = foundSup;
+    onAgentSupChange(foundSup); // Populates and enables Agent select
+    document.getElementById('agent-ldap-select').value = ldap;
+  }
+
   switchTab('agent');
 }
 
