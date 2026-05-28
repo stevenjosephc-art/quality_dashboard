@@ -94,7 +94,12 @@
 
   <script>
     // Injected from server
-    window.BOOTSTRAP_DATA = <?!= bootstrap ?>;
+    try {
+      window.BOOTSTRAP_DATA = <?!= bootstrap ?>;
+    } catch (e) {
+      console.error('Failed to parse BOOTSTRAP_DATA', e);
+      window.BOOTSTRAP_DATA = { error: 'Parse Error: ' + e.message };
+    }
   </script>
   <?!= HtmlService.createHtmlOutputFromFile('QualityView_JS').getContent(); ?>
 </body>

@@ -70,30 +70,19 @@ var Q_PARAM_GROUPS = {
 
 var Q_PARAM_COLS = [].concat(Q_PARAM_GROUPS.customer, Q_PARAM_GROUPS.business, Q_PARAM_GROUPS.compliance);
 
+var _MEMOIZED_RAW_DATA = null;
+
 // ── APPS SCRIPT WEB APP ───────────────────────────────────────────────────
 
 function doGet() {
   var template = HtmlService.createTemplateFromFile('QualityView');
 
   try {
-    // Pre-fetch critical data for instant loading
+    // Only fetch session for instant shell loading
     var session = clientGetSession();
-    var months = clientGetAvailableQualityMonths();
-    var initialMonth = months[0] || '';
-    var initialData = initialMonth ? clientGetMyQuality(session.ldap, initialMonth) : null;
-
-    // All agents for the dropdown
-    var allAgents = clientGetAllAgents();
-    var allSupervisors = clientGetAllSupervisors();
-    var allManagers = clientGetAllManagers();
 
     template.bootstrap = JSON.stringify({
-      session: session,
-      months: months,
-      initialData: initialData,
-      allAgents: allAgents,
-      allSupervisors: allSupervisors,
-      allManagers: allManagers
+      session: session
     });
   } catch(e) {
     Logger.log('doGet Error: ' + e.message);
@@ -109,6 +98,8 @@ function doGet() {
 // ── DATA LOADING ──────────────────────────────────────────────────────────
 
 function getRawQualityData() {
+  if (_MEMOIZED_RAW_DATA) return _MEMOIZED_RAW_DATA;
+
   var cache = CacheService.getScriptCache();
   var cacheKey = 'quality_raw_v1';
 
@@ -121,7 +112,10 @@ function getRawQualityData() {
         if (!chunk) { assembled = null; break; }
         assembled += chunk;
       }
-      if (assembled) return JSON.parse(assembled);
+      if (assembled) {
+        _MEMOIZED_RAW_DATA = JSON.parse(assembled);
+        return _MEMOIZED_RAW_DATA;
+      }
     }
   } catch(e) {
     Logger.log('Cache read error: ' + e.message);
@@ -135,6 +129,7 @@ function getRawQualityData() {
   if (raw.length < 2) return [];
 
   var data = raw.slice(1);
+  _MEMOIZED_RAW_DATA = data;
 
   try {
     var serialized = JSON.stringify(data);
@@ -143,9 +138,9 @@ function getRawQualityData() {
     for (var ci = 0; ci < serialized.length; ci += chunkSize) {
       chunks.push(serialized.slice(ci, ci + chunkSize));
     }
-    chunks.forEach(function(chunk, idx) {
-      cache.put(cacheKey + '_chunk_' + idx, chunk, 600);
-    });
+    for (var j = 0; j < chunks.length; j++) {
+      cache.put(cacheKey + '_chunk_' + j, chunks[j], 600);
+    }
     cache.put(cacheKey + '_chunks', String(chunks.length), 600);
   } catch(e) {
     Logger.log('Cache write error: ' + e.message);
@@ -157,15 +152,15 @@ function getRawQualityData() {
 function getAvailableQualityMonths() {
   var rows = getRawQualityData();
   var seen = {};
-  rows.forEach(function(r) {
-    var month = r[Q_COLS.REVIEW_MONTH];
+  for (var i = 0; i < rows.length; i++) {
+    var month = rows[i][Q_COLS.REVIEW_MONTH];
     if (month) {
       if (month instanceof Date) {
         month = Utilities.formatDate(month, Session.getScriptTimeZone(), 'yyyy-MM');
       }
       seen[month] = true;
     }
-  });
+  }
   return Object.keys(seen).sort().reverse();
 }
 
@@ -193,37 +188,42 @@ function formatDate(val) {
 // ── AGGREGATION ───────────────────────────────────────────────────────────
 
 function aggregateQualityRows(rows) {
-  if (rows.length === 0) return null;
+  if (!rows || rows.length === 0) return null;
 
   var customerSum = 0, businessSum = 0, complianceSum = 0;
   var params = {};
 
-  Q_PARAM_COLS.forEach(function(p) { params[p] = { yes: 0, total: 0 }; });
+  for (var i = 0; i < Q_PARAM_COLS.length; i++) {
+    params[Q_PARAM_COLS[i]] = { yes: 0, total: 0 };
+  }
 
-  rows.forEach(function(r) {
+  for (var j = 0; j < rows.length; j++) {
+    var r = rows[j];
     customerSum += (parseFloat(r[Q_COLS.CUSTOMER_CRITICAL]) || 0);
     businessSum += (parseFloat(r[Q_COLS.BUSINESS_CRITICAL]) || 0);
     complianceSum += (parseFloat(r[Q_COLS.COMPLIANCE_CRITICAL]) || 0);
 
-    Q_PARAM_COLS.forEach(function(p) {
+    for (var k = 0; k < Q_PARAM_COLS.length; k++) {
+      var p = Q_PARAM_COLS[k];
       var val = String(r[Q_COLS[p]]).trim().toLowerCase();
       if (val === 'yes' || val === 'no' || val === '1' || val === '0') {
         params[p].total++;
         if (val === 'yes' || val === '1') params[p].yes++;
       }
-    });
-  });
+    }
+  }
 
   var count = rows.length;
   var paramScores = {};
-  Q_PARAM_COLS.forEach(function(p) {
-    paramScores[p] = params[p].total > 0 ? (params[p].yes / params[p].total) * 100 : null;
-  });
+  for (var l = 0; l < Q_PARAM_COLS.length; l++) {
+    var pCol = Q_PARAM_COLS[l];
+    paramScores[pCol] = params[pCol].total > 0 ? (params[pCol].yes / params[pCol].total) * 100 : null;
+  }
 
   var groupedParams = {
-    customer: Q_PARAM_GROUPS.customer.map(p => ({ name: p, score: paramScores[p] })),
-    business: Q_PARAM_GROUPS.business.map(p => ({ name: p, score: paramScores[p] })),
-    compliance: Q_PARAM_GROUPS.compliance.map(p => ({ name: p, score: paramScores[p] }))
+    customer: Q_PARAM_GROUPS.customer.map(function(p) { return { name: p, score: paramScores[p] }; }),
+    business: Q_PARAM_GROUPS.business.map(function(p) { return { name: p, score: paramScores[p] }; }),
+    compliance: Q_PARAM_GROUPS.compliance.map(function(p) { return { name: p, score: paramScores[p] }; })
   };
 
   return {
@@ -241,20 +241,23 @@ function aggregateTrends(rows) {
   var daily = {};
   var weekly = {};
 
-  rows.forEach(function(r) {
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
     var dateRaw = r[Q_COLS.REVIEW_DATE];
     var date = formatDate(dateRaw);
     var week = r[Q_COLS.REVIEW_WEEK];
 
-    [ {obj: daily, key: date}, {obj: weekly, key: week} ].forEach(function(t) {
-      if (!t.key) return;
+    var trends = [ {obj: daily, key: date}, {obj: weekly, key: week} ];
+    for (var j = 0; j < trends.length; j++) {
+      var t = trends[j];
+      if (!t.key) continue;
       if (!t.obj[t.key]) t.obj[t.key] = { customer: 0, business: 0, compliance: 0, count: 0 };
       t.obj[t.key].customer += (parseFloat(r[Q_COLS.CUSTOMER_CRITICAL]) || 0);
       t.obj[t.key].business += (parseFloat(r[Q_COLS.BUSINESS_CRITICAL]) || 0);
       t.obj[t.key].compliance += (parseFloat(r[Q_COLS.COMPLIANCE_CRITICAL]) || 0);
       t.obj[t.key].count++;
-    });
-  });
+    }
+  }
 
   var formatTrend = function(obj) {
     return Object.keys(obj).sort().map(function(k) {
@@ -282,10 +285,14 @@ function clientGetMyQuality(ldap, month) {
   if (!ldap) ldap = Session.getActiveUser().getEmail().split('@')[0];
 
   var allRows = getRawQualityData();
-  var filtered = allRows.filter(function(r) {
-    return normalizeLdap(r[Q_COLS.AGENT_LDAP]) === normalizeLdap(ldap) &&
-           normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
-  });
+  var filtered = [];
+  for (var i = 0; i < allRows.length; i++) {
+    var r = allRows[i];
+    if (normalizeLdap(r[Q_COLS.AGENT_LDAP]) === normalizeLdap(ldap) &&
+        normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month) {
+      filtered.push(r);
+    }
+  }
 
   var stats = aggregateQualityRows(filtered);
   var trends = aggregateTrends(filtered);
@@ -341,31 +348,38 @@ function clientGetMyQuality(ldap, month) {
 
 function clientGetTeamQuality(supervisor, month) {
   var allRows = getRawQualityData();
-  var filtered = allRows.filter(function(r) {
-    return String(r[Q_COLS.SUPERVISOR]).trim() === String(supervisor).trim() &&
-           normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
-  });
+  var filtered = [];
+  for (var i = 0; i < allRows.length; i++) {
+    var r = allRows[i];
+    if (String(r[Q_COLS.SUPERVISOR]).trim() === String(supervisor).trim() &&
+        normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month) {
+      filtered.push(r);
+    }
+  }
 
   var stats = aggregateQualityRows(filtered);
   var trends = aggregateTrends(filtered);
 
   var agentStats = {};
   var uniqueLdaps = [];
-  filtered.forEach(function(r) {
-    var ldap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
+  for (var j = 0; j < filtered.length; j++) {
+    var row = filtered[j];
+    var ldap = normalizeLdap(row[Q_COLS.AGENT_LDAP]);
     if (!agentStats[ldap]) {
       agentStats[ldap] = [];
       uniqueLdaps.push(ldap);
     }
-    agentStats[ldap].push(r);
-  });
+    agentStats[ldap].push(row);
+  }
 
   var agents = uniqueLdaps.map(function(ldap) {
     return {
       ldap: ldap,
       stats: aggregateQualityRows(agentStats[ldap])
     };
-  }).sort((a,b) => (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance));
+  }).sort(function(a, b) {
+    return (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance);
+  });
 
   return {
     supervisor: supervisor,
@@ -379,31 +393,38 @@ function clientGetTeamQuality(supervisor, month) {
 
 function clientGetClusterQuality(manager, month) {
   var allRows = getRawQualityData();
-  var filtered = allRows.filter(function(r) {
-    return String(r[Q_COLS.MANAGER]).trim() === String(manager).trim() &&
-           normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month;
-  });
+  var filtered = [];
+  for (var i = 0; i < allRows.length; i++) {
+    var r = allRows[i];
+    if (String(r[Q_COLS.MANAGER]).trim() === String(manager).trim() &&
+        normalizeQualityMonth(r[Q_COLS.REVIEW_MONTH]) === month) {
+      filtered.push(r);
+    }
+  }
 
   var stats = aggregateQualityRows(filtered);
   var trends = aggregateTrends(filtered);
 
   var supervisorStats = {};
   var uniqueSupervisors = [];
-  filtered.forEach(function(r) {
-    var sup = String(r[Q_COLS.SUPERVISOR]).trim();
+  for (var j = 0; j < filtered.length; j++) {
+    var row = filtered[j];
+    var sup = String(row[Q_COLS.SUPERVISOR]).trim();
     if (!supervisorStats[sup]) {
       supervisorStats[sup] = [];
       uniqueSupervisors.push(sup);
     }
-    supervisorStats[sup].push(r);
-  });
+    supervisorStats[sup].push(row);
+  }
 
   var supervisors = uniqueSupervisors.map(function(sup) {
     return {
       name: sup,
       stats: aggregateQualityRows(supervisorStats[sup])
     };
-  }).sort((a,b) => (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance));
+  }).sort(function(a, b) {
+    return (b.stats.customer + b.stats.business + b.stats.compliance) - (a.stats.customer + a.stats.business + a.stats.compliance);
+  });
 
   return {
     manager: manager,
@@ -418,10 +439,10 @@ function clientGetClusterQuality(manager, month) {
 function clientGetAllAgents() {
   var rows = getRawQualityData();
   var seen = {};
-  rows.forEach(function(r) {
-    var ldap = normalizeLdap(r[Q_COLS.AGENT_LDAP]);
+  for (var i = 0; i < rows.length; i++) {
+    var ldap = normalizeLdap(rows[i][Q_COLS.AGENT_LDAP]);
     if (ldap) seen[ldap] = true;
-  });
+  }
   return Object.keys(seen).sort().map(function(ldap) {
     return { ldap: ldap };
   });
@@ -430,20 +451,20 @@ function clientGetAllAgents() {
 function clientGetAllSupervisors() {
   var rows = getRawQualityData();
   var seen = {};
-  rows.forEach(function(r) {
-    var sup = String(r[Q_COLS.SUPERVISOR]).trim();
+  for (var i = 0; i < rows.length; i++) {
+    var sup = String(rows[i][Q_COLS.SUPERVISOR]).trim();
     if (sup) seen[sup] = true;
-  });
+  }
   return Object.keys(seen).sort();
 }
 
 function clientGetAllManagers() {
   var rows = getRawQualityData();
   var seen = {};
-  rows.forEach(function(r) {
-    var mgr = String(r[Q_COLS.MANAGER]).trim();
+  for (var i = 0; i < rows.length; i++) {
+    var mgr = String(rows[i][Q_COLS.MANAGER]).trim();
     if (mgr) seen[mgr] = true;
-  });
+  }
   return Object.keys(seen).sort();
 }
 
