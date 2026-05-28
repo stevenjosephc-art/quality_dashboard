@@ -92,6 +92,10 @@
     <div id="view-content"></div>
   </div>
 
+  <script>
+    // Injected from server
+    window.BOOTSTRAP_DATA = JSON.parse(<?!= bootstrap ?>);
+  </script>
   <?!= HtmlService.createHtmlOutputFromFile('QualityView_JS').getContent(); ?>
 </body>
 </html>

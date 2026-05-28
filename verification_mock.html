@@ -1,4 +1,465 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quality Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+<style>
+:root {
+  --surface: #ffffff;
+  --surface-2: #f5f5f7;
+  --surface-3: #e8e8ed;
+  --border: #d2d2d7;
+  --border-strong: #86868b;
+  --text-primary: #1d1d1f;
+  --text-secondary: #424245;
+  --text-hint: #86868b;
+  --accent: #0071e3;
+  --success: #34c759;
+  --error: #ff3b30;
+  --warning: #ff9500;
+}
+
+body {
+  margin: 0;
+  background-color: var(--surface-2);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+.q-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+.q-loader-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.q-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.q-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.q-page-title {
+  font-size: 28px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  letter-spacing: -0.5px;
+}
+
+.q-icon-badge {
+  width: 40px;
+  height: 40px;
+  background: var(--accent);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+}
+
+.q-pill-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2386868b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19.5 8.25l-7.5 7.5-7.5-7.5' /%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px;
+  padding-right: 36px;
+}
+
+.q-pill-select:hover {
+  border-color: var(--border-strong);
+  background-color: var(--surface-2);
+}
+
+.q-tab-row {
+  display: flex;
+  gap: 6px;
+  background: var(--surface-3);
+  padding: 4px;
+  border-radius: 14px;
+  margin-bottom: 32px;
+  width: fit-content;
+}
+
+.q-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.q-tab.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+}
+
+.q-tab-icon {
+  width: 20px;
+  height: 20px;
+  opacity: 0.6;
+}
+
+.q-tab.active .q-tab-icon {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.q-card {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.01), 0 1px 2px rgba(0,0,0,0.02);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+
+.q-selector-card {
+  padding: 24px 32px;
+}
+
+.q-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.q-selector-group label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-hint);
+  letter-spacing: 1.2px;
+}
+
+.q-search-wrapper {
+  position: relative;
+  flex: 1;
+  max-width: 320px;
+}
+
+.q-search-wrapper input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.q-search-wrapper input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.12);
+}
+
+.q-score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.q-score-card {
+  background: var(--surface);
+  padding: 28px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.q-score-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.04);
+}
+
+.q-score-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 12px;
+}
+
+.q-score-value {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+
+.q-score-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.status-on { color: var(--success); }
+.status-off { color: var(--error); }
+
+.q-chart-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.q-chart-full {
+  grid-column: 1 / -1;
+}
+
+.q-chart-card {
+  min-height: 480px;
+}
+
+.q-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.q-chart-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.q-table-wrapper {
+  overflow-x: auto;
+  margin: 0 -32px;
+  padding: 0 32px;
+}
+
+.q-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.q-table th {
+  text-align: left;
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-hint);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+}
+
+.q-table td {
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--surface-2);
+  vertical-align: middle;
+}
+
+.q-table tr:last-child td {
+  border-bottom: none;
+}
+
+.q-table tr.clickable {
+  transition: background 0.2s;
+}
+
+.q-table tr.clickable:hover td {
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.q-param-bar-bg {
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.q-param-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+.mb-32 { margin-bottom: 32px; }
+.mt-16 { margin-top: 16px; }
+.mt-32 { margin-top: 32px; }
+.text-center { text-align: center; }
+.py-40 { padding-top: 40px; padding-bottom: 40px; }
+
+@media (max-width: 1200px) {
+  .q-chart-row { grid-template-columns: 1fr; }
+}
+
+/* Icons */
+.icon-pass { color: var(--success); }
+.icon-fail { color: var(--error); }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+</style>
+</style></head><body>
+  <base target="_top">
+  <!-- ApexCharts -->
+  <!-- Google Fonts -->
+
+</head>
+  <div id="app-loader" class="q-loader-overlay">
+    <div class="q-spinner"></div>
+    <div class="mt-16">Loading Quality Dashboard...</div>
+  </div>
+
+  <div id="quality-root" class="q-container" style="display:none">
+    <div class="q-topbar">
+      <div class="q-page-title">
+        <div class="q-icon-badge">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="white" style="width:20px;height:20px">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        Quality Dashboard
+      </div>
+      <div class="q-controls">
+        <select id="quality-month-picker" class="q-pill-select" onchange="onMonthChange(this.value)">
+          <option value="">Loading months...</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="q-tab-row">
+      <div class="q-tab active" id="tab-agent" onclick="switchTab('agent')">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="q-tab-icon">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+        </svg>
+        <span>Agent Scores</span>
+      </div>
+      <div class="q-tab" id="tab-team" onclick="switchTab('team')">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="q-tab-icon">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a5.971 5.971 0 00-.941 3.197m0 0l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 016 21c2.17 0 4.207-.576 5.963-1.584A6.062 6.062 0 0112 18.719m-2.43-10.038a3.75 3.75 0 117.5 0 3.75 3.75 0 01-7.5 0zM4.5 9.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0z" />
+        </svg>
+        <span>Team Scores</span>
+      </div>
+      <div class="q-tab" id="tab-cluster" onclick="switchTab('cluster')">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="q-tab-icon">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0v1.125c0 1.125.507 2.097 1.303 2.734M9 16.5v2.25m0-2.25h2.25M9 16.5H6.75M12 13.5v3.375m0 0h.008v.008H12v-.008zM9.75 10.5c0 .414.336.75.75.75h3a.75.75 0 00.75-.75V6.75a.75.75 0 00-.75-.75h-3a.75.75 0 00-.75.75v3.75z" />
+        </svg>
+        <span>Cluster Scores</span>
+      </div>
+    </div>
+
+    <!-- Agent Selector -->
+    <div id="selector-agent" class="q-card mb-24 q-selector-card">
+      <div class="q-selector-group">
+        <label>Agent LDAP:</label>
+        <div class="q-search-wrapper">
+          <input type="text" id="agent-ldap-input" list="agent-list" placeholder="Enter LDAP..." onchange="onAgentChange(this.value)">
+          <datalist id="agent-list"></datalist>
+        </div>
+      </div>
+    </div>
+
+    <!-- Team Selector -->
+    <div id="selector-team" class="q-card mb-24 q-selector-card" style="display:none">
+      <div class="q-selector-group">
+        <label>Supervisor:</label>
+        <div class="q-search-wrapper">
+          <input type="text" id="supervisor-input" list="supervisor-list" placeholder="Enter Supervisor Name..." onchange="onSupervisorChange(this.value)">
+          <datalist id="supervisor-list"></datalist>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cluster Selector -->
+    <div id="selector-cluster" class="q-card mb-24 q-selector-card" style="display:none">
+      <div class="q-selector-group">
+        <label>Manager:</label>
+        <div class="q-search-wrapper">
+          <input type="text" id="manager-input" list="manager-list" placeholder="Enter Manager Name..." onchange="onManagerChange(this.value)">
+          <datalist id="manager-list"></datalist>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-content"></div>
+  </div>
+
+  <script>
+    // Injected from server
+  </script>
 <script>
+window.BOOTSTRAP_DATA = JSON.parse(JSON.stringify({'session':{'ldap':'test_user'},'months':['2024-05'],'initialData':{'hasData':true,'stats':{'customer':96,'business':92,'compliance':100,'count':10,'groupedParams':{'customer':[{'name':'LISTENING','score':95}],'business':[{'name':'CATEGORIZATION','score':90}],'compliance':[{'name':'AUTHENTICATION',score:100}]}},'trends':{'daily':[{'label':'2024-05-01','customer':95,'business':90,'compliance':100,'avg':95}]},'caseLog':[{'caseId':'123','reviewDate':'2024-05-01','customer':1,'business':1,'compliance':1,'comments':'Good job'}]},'allAgents':[{'ldap':'agent1'}],'allSupervisors':['Sup1'],'allManagers':['Mgr1']}));
+var google = { script: { run: { withSuccessHandler: function(cb) { return { clientGetMyQuality: function(ldap, month) { cb({hasData: true, stats: {customer: 96, business: 92, compliance: 100, count: 10, groupedParams: {customer: [{name: 'LISTENING', score: 95}], business: [{name: 'CATEGORIZATION', score: 90}], compliance: [{name: 'AUTHENTICATION', score: 100}]}}, trends: {daily: [{label: '2024-05-01', customer: 95, business: 90, compliance: 100, avg: 95}]}, caseLog: [{caseId: '123', reviewDate: '2024-05-01', customer: 1, business: 1, compliance: 1, comments: 'Good job'}]}); } }; } } } };
 // ============================================================
 // QualityView_JS — Core Logic for Quality Dashboard
 // ============================================================
@@ -539,4 +1000,4 @@ function viewSupervisor(name) {
   switchTab('team');
 }
 
-</script>
+</script></body></html>
